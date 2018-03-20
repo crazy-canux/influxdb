@@ -153,6 +153,7 @@ type EngineOptions struct {
 	ShardID       uint64
 	InmemIndex    interface{} // shared in-memory index
 
+	CompactionPlannerCreator    CompactionPlannerCreator
 	CompactionFilter            CompactionFilter
 	CompactionLimiter           limiter.Fixed
 	CompactionThroughputLimiter limiter.Rate
@@ -185,3 +186,5 @@ type CompactionFilter interface {
 	// filtering will occur.
 	FilterTimeRange(key []byte) (int64, int64)
 }
+
+type CompactionPlannerCreator func(cfg Config) interface{}
