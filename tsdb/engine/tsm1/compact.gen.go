@@ -86,6 +86,10 @@ func (k *tsmKeyIterator) combineFloat(dedup bool) blocks {
 					k.blocks[i].markRead(v[0].UnixNano(), v[len(v)-1].UnixNano())
 				}
 
+				// Remove any values filtered globally
+				filterMin, filterMax := k.compactionFilter.FilterTimeRange(k.blocks[i].key)
+				v = FloatValues(v).Exclude(filterMin, filterMax)
+
 				// Apply each tombstone to the block
 				for _, ts := range k.blocks[i].tombstones {
 					v = FloatValues(v).Exclude(ts.Min, ts.Max)
@@ -284,6 +288,10 @@ func (k *tsmKeyIterator) combineInteger(dedup bool) blocks {
 					// Record that we read a subset of the block
 					k.blocks[i].markRead(v[0].UnixNano(), v[len(v)-1].UnixNano())
 				}
+
+				// Remove any values filtered globally
+				filterMin, filterMax := k.compactionFilter.FilterTimeRange(k.blocks[i].key)
+				v = IntegerValues(v).Exclude(filterMin, filterMax)
 
 				// Apply each tombstone to the block
 				for _, ts := range k.blocks[i].tombstones {
@@ -484,6 +492,10 @@ func (k *tsmKeyIterator) combineUnsigned(dedup bool) blocks {
 					k.blocks[i].markRead(v[0].UnixNano(), v[len(v)-1].UnixNano())
 				}
 
+				// Remove any values filtered globally
+				filterMin, filterMax := k.compactionFilter.FilterTimeRange(k.blocks[i].key)
+				v = UnsignedValues(v).Exclude(filterMin, filterMax)
+
 				// Apply each tombstone to the block
 				for _, ts := range k.blocks[i].tombstones {
 					v = UnsignedValues(v).Exclude(ts.Min, ts.Max)
@@ -683,6 +695,10 @@ func (k *tsmKeyIterator) combineString(dedup bool) blocks {
 					k.blocks[i].markRead(v[0].UnixNano(), v[len(v)-1].UnixNano())
 				}
 
+				// Remove any values filtered globally
+				filterMin, filterMax := k.compactionFilter.FilterTimeRange(k.blocks[i].key)
+				v = StringValues(v).Exclude(filterMin, filterMax)
+
 				// Apply each tombstone to the block
 				for _, ts := range k.blocks[i].tombstones {
 					v = StringValues(v).Exclude(ts.Min, ts.Max)
@@ -881,6 +897,10 @@ func (k *tsmKeyIterator) combineBoolean(dedup bool) blocks {
 					// Record that we read a subset of the block
 					k.blocks[i].markRead(v[0].UnixNano(), v[len(v)-1].UnixNano())
 				}
+
+				// Remove any values filtered globally
+				filterMin, filterMax := k.compactionFilter.FilterTimeRange(k.blocks[i].key)
+				v = BooleanValues(v).Exclude(filterMin, filterMax)
 
 				// Apply each tombstone to the block
 				for _, ts := range k.blocks[i].tombstones {

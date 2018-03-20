@@ -1,6 +1,7 @@
 package tsm1_test
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"os"
@@ -1005,7 +1006,7 @@ func TestTSMKeyIterator_Single(t *testing.T) {
 
 	r := MustTSMReader(dir, 1, writes)
 
-	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, r)
+	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, nil, r)
 	if err != nil {
 		t.Fatalf("unexpected error creating WALKeyIterator: %v", err)
 	}
@@ -1065,7 +1066,7 @@ func TestTSMKeyIterator_Duplicate(t *testing.T) {
 
 	r2 := MustTSMReader(dir, 2, writes2)
 
-	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, r1, r2)
+	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, nil, r1, r2)
 	if err != nil {
 		t.Fatalf("unexpected error creating WALKeyIterator: %v", err)
 	}
@@ -1126,7 +1127,7 @@ func TestTSMKeyIterator_MultipleKeysDeleted(t *testing.T) {
 	r2 := MustTSMReader(dir, 2, points2)
 	r2.Delete([][]byte{[]byte("cpu,host=A#!~#count")})
 
-	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, r1, r2)
+	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, nil, r1, r2)
 	if err != nil {
 		t.Fatalf("unexpected error creating WALKeyIterator: %v", err)
 	}
@@ -1207,7 +1208,7 @@ func TestTSMKeyIterator_SingleDeletes(t *testing.T) {
 		t.Fatal(e)
 	}
 
-	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, r1)
+	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, nil, r1)
 	if err != nil {
 		t.Fatalf("unexpected error creating WALKeyIterator: %v", err)
 	}
@@ -1264,7 +1265,7 @@ func TestTSMKeyIterator_Abort(t *testing.T) {
 	r := MustTSMReader(dir, 1, writes)
 
 	intC := make(chan struct{})
-	iter, err := tsm1.NewTSMKeyIterator(1, false, intC, r)
+	iter, err := tsm1.NewTSMKeyIterator(1, false, nil, intC, r)
 	if err != nil {
 		t.Fatalf("unexpected error creating WALKeyIterator: %v", err)
 	}
@@ -1286,6 +1287,132 @@ func TestTSMKeyIterator_Abort(t *testing.T) {
 	}
 }
 
+type blockFilter struct {
+	key []byte
+}
+
+func (f blockFilter) FilterBlock(key []byte, minTime, maxTime int64) bool {
+	return bytes.Equal(key, f.key)
+}
+func (f blockFilter) FilterTimeRange(key []byte) (int64, int64) {
+	return math.MaxInt64, math.MinInt64
+}
+
+// Tests that a block can be filtered via a CompactionFilter
+func TestTSMKeyIterator_FilterBlock(t *testing.T) {
+	dir := MustTempDir()
+	defer os.RemoveAll(dir)
+
+	v1 := tsm1.NewValue(1, 1.1)
+	writes := map[string][]tsm1.Value{
+		"cpu,host=A#!~#value": []tsm1.Value{v1},
+		"cpu,host=B#!~#value": []tsm1.Value{v1},
+	}
+
+	r := MustTSMReader(dir, 1, writes)
+
+	iter, err := tsm1.NewTSMKeyIterator(1, false, blockFilter{key: []byte("cpu,host=B#!~#value")}, nil, r)
+	if err != nil {
+		t.Fatalf("unexpected error creating WALKeyIterator: %v", err)
+	}
+
+	var readValues bool
+	for iter.Next() {
+		key, _, _, block, err := iter.Read()
+		if err != nil {
+			t.Fatalf("unexpected error read: %v", err)
+		}
+
+		values, err := tsm1.DecodeBlock(block, nil)
+		if err != nil {
+			t.Fatalf("unexpected error decode: %v", err)
+		}
+
+		if got, exp := string(key), "cpu,host=A#!~#value"; got != exp {
+			t.Fatalf("key mismatch: got %v, exp %v", got, exp)
+		}
+
+		if got, exp := len(values), 1; got != exp {
+			t.Fatalf("values length mismatch: got %v, exp %v", got, exp)
+		}
+
+		for _, v := range values {
+			readValues = true
+			assertValueEqual(t, v, v1)
+		}
+	}
+
+	if !readValues {
+		t.Fatalf("failed to read any values")
+	}
+}
+
+type rangeFilter struct {
+	min, max int64
+}
+
+func (f rangeFilter) FilterBlock(key []byte, minTime, maxTime int64) bool {
+	return false
+}
+func (f rangeFilter) FilterTimeRange(key []byte) (int64, int64) {
+	return f.min, f.max
+}
+
+// Tests that a block can be filtered via a CompactionFilter
+func TestTSMKeyIterator_FilterTimeRange(t *testing.T) {
+	dir := MustTempDir()
+	defer os.RemoveAll(dir)
+
+	v1 := tsm1.NewValue(1, 1.1)
+	v2 := tsm1.NewValue(2, 1.1)
+
+	writes1 := map[string][]tsm1.Value{
+		"cpu,host=A#!~#value": []tsm1.Value{v1, v2},
+	}
+
+	v3 := tsm1.NewValue(3, 1.1)
+	writes2 := map[string][]tsm1.Value{
+		"cpu,host=A#!~#value": []tsm1.Value{v1, v3},
+	}
+
+	r1 := MustTSMReader(dir, 1, writes1)
+	r2 := MustTSMReader(dir, 2, writes2)
+
+	iter, err := tsm1.NewTSMKeyIterator(1, false, rangeFilter{min: 0, max: 2}, nil, r1, r2)
+	if err != nil {
+		t.Fatalf("unexpected error creating WALKeyIterator: %v", err)
+	}
+
+	var readValues bool
+	for iter.Next() {
+		key, _, _, block, err := iter.Read()
+		if err != nil {
+			t.Fatalf("unexpected error read: %v", err)
+		}
+
+		values, err := tsm1.DecodeBlock(block, nil)
+		if err != nil {
+			t.Fatalf("unexpected error decode: %v", err)
+		}
+
+		if got, exp := string(key), "cpu,host=A#!~#value"; got != exp {
+			t.Fatalf("key mismatch: got %v, exp %v", got, exp)
+		}
+
+		if got, exp := len(values), 1; got != exp {
+			t.Fatalf("values length mismatch: got %v, exp %v", got, exp)
+		}
+
+		for _, v := range values {
+			readValues = true
+			assertValueEqual(t, v, v3)
+		}
+	}
+
+	if !readValues {
+		t.Fatalf("failed to read any values")
+	}
+}
 func TestCacheKeyIterator_Single(t *testing.T) {
 	v0 := tsm1.NewValue(1, 1.0)
 
@@ -2786,6 +2913,7 @@ func TestDefaultPlanner_Plan_ForceFull(t *testing.T) {
 }
 
 func assertValueEqual(t *testing.T, a, b tsm1.Value) {
+	t.Helper()
 	if got, exp := a.UnixNano(), b.UnixNano(); got != exp {
 		t.Fatalf("time mismatch: got %v, exp %v", got, exp)
 	}

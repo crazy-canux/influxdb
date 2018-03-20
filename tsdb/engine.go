@@ -153,6 +153,7 @@ type EngineOptions struct {
 	ShardID       uint64
 	InmemIndex    interface{} // shared in-memory index
 
+	CompactionFilter            CompactionFilter
 	CompactionLimiter           limiter.Fixed
 	CompactionThroughputLimiter limiter.Rate
 	WALEnabled                  bool
@@ -173,3 +174,14 @@ func NewEngineOptions() EngineOptions {
 
 // NewInmemIndex returns a new "inmem" index type.
 var NewInmemIndex func(name string, sfile *SeriesFile) (interface{}, error)
+
+// CompactionFilter allows for filter blocks and values globally during compactions
+type CompactionFilter interface {
+	//FilterBlock filters block from a compaction if the true is returned.
+	FilterBlock(key []byte, minTime, maxTime int64) bool
+
+	// FilterTimeRange returns the range of time [min, max] of values to filter during
+	// compactions for key.  If the returned values are inverted, [max, min], no
+	// filtering will occur.
+	FilterTimeRange(key []byte) (int64, int64)
+}

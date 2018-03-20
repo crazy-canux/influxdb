@@ -199,9 +199,10 @@ func NewEngine(id uint64, idx tsdb.Index, database, path string, walPath string,
 	cache := NewCache(uint64(opt.Config.CacheMaxMemorySize), path)
 
 	c := &Compactor{
-		Dir:       path,
-		FileStore: fs,
-		RateLimit: opt.CompactionThroughputLimiter,
+		Dir:              path,
+		FileStore:        fs,
+		RateLimit:        opt.CompactionThroughputLimiter,
+		CompactionFilter: opt.CompactionFilter,
 	}
 
 	logger := zap.NewNop()

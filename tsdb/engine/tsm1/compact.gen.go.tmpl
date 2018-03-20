@@ -82,6 +82,10 @@ func (k *tsmKeyIterator) combine{{.Name}}(dedup bool) blocks {
 					k.blocks[i].markRead(v[0].UnixNano(), v[len(v)-1].UnixNano())
 				}
 
+				// Remove any values filtered globally
+				filterMin, filterMax := k.compactionFilter.FilterTimeRange(k.blocks[i].key)
+				v = {{.Name}}Values(v).Exclude(filterMin, filterMax)
+
 				// Apply each tombstone to the block
 				for _, ts := range k.blocks[i].tombstones {
 					v = {{.Name}}Values(v).Exclude(ts.Min, ts.Max)

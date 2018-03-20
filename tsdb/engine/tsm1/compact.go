@@ -661,6 +661,19 @@ func (c *DefaultPlanner) Release(groups []CompactionGroup) {
 	}
 }
 
+// noFilter is a CompactionFilter that does not filter anything
+type noFilter struct {
+}
+
+func (f *noFilter) FilterBlock(key []byte, minTime, maxTime int64) bool {
+	return false
+}
+
+func (f *noFilter) FilterTimeRange(key []byte) (int64, int64) {
+	// Return an invalid time range so nothing can be filtered
+	return math.MaxInt64, math.MinInt64
+}
+
 // Compactor merges multiple TSM files into new files or
 // writes a Cache into 1 or more TSM files.
 type Compactor struct {
@@ -674,6 +687,10 @@ type Compactor struct {
 
 	// RateLimit is the limit for disk writes for all concurrent compactions.
 	RateLimit limiter.Rate
+
+	// CompactionFilter allows for extending compactions to filter (drop) whole blocks or values
+	// during the compaction process.
+	CompactionFilter tsdb.CompactionFilter
 
 	mu                 sync.RWMutex
 	snapshotsEnabled   bool
@@ -895,7 +912,7 @@ func (c *Compactor) compact(fast bool, tsmFiles []string) ([]string, error) {
 		return nil, nil
 	}
 
-	tsm, err := NewTSMKeyIterator(size, fast, intC, trs...)
+	tsm, err := NewTSMKeyIterator(size, fast, c.CompactionFilter, intC, trs...)
 	if err != nil {
 		return nil, err
 	}
@@ -1207,6 +1224,10 @@ type tsmKeyIterator struct {
 	key []byte
 	typ byte
 
+	// compactionFilter is called for all blocks and decoded values to determine if the block
+	// or values should be discarded.
+	compactionFilter tsdb.CompactionFilter
+
 	iterators []*BlockIterator
 	blocks    blocks
 
@@ -1279,21 +1300,26 @@ func (a blocks) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 
 // NewTSMKeyIterator returns a new TSM key iterator from readers.
 // size indicates the maximum number of values to encode in a single block.
-func NewTSMKeyIterator(size int, fast bool, interrupt chan struct{}, readers ...*TSMReader) (KeyIterator, error) {
+func NewTSMKeyIterator(size int, fast bool, filter tsdb.CompactionFilter, interrupt chan struct{}, readers ...*TSMReader) (KeyIterator, error) {
 	var iter []*BlockIterator
 	for _, r := range readers {
 		iter = append(iter, r.BlockIterator())
 	}
 
+	if filter == nil {
+		filter = &noFilter{}
+	}
+
 	return &tsmKeyIterator{
-		readers:   readers,
-		values:    map[string][]Value{},
-		pos:       make([]int, len(readers)),
-		size:      size,
-		iterators: iter,
-		fast:      fast,
-		buf:       make([]blocks, len(iter)),
-		interrupt: interrupt,
+		readers:          readers,
+		values:           map[string][]Value{},
+		pos:              make([]int, len(readers)),
+		size:             size,
+		iterators:        iter,
+		fast:             fast,
+		buf:              make([]blocks, len(iter)),
+		interrupt:        interrupt,
+		compactionFilter: filter,
 	}, nil
 }
 
@@ -1348,6 +1374,11 @@ RETRY:
 				key, minTime, maxTime, typ, _, b, err := iter.Read()
 				if err != nil {
 					k.err = err
+				}
+
+				// Should this block be dropped due to a compaction filter?
+				if k.compactionFilter.FilterBlock(key, minTime, maxTime) {
+					continue
 				}
 
 				// This block may have ranges of time removed from it that would
