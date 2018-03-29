@@ -455,10 +455,10 @@
 ###
 
 [[udp]]
-  # enabled = false
-  # bind-address = ":8089"
-  # database = "udp"
-  # retention-policy = ""
+  enabled = true
+  bind-address = ":8089"
+  database = "sandbox"
+  retention-policy = ""
 
   # These next lines control how batching works. You should have this enabled
   # otherwise you could get dropped metrics or poor performance. Batching

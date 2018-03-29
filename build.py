@@ -17,7 +17,7 @@ import argparse
 ################
 
 # Packaging variables
-PACKAGE_NAME = "influxdb"
+PACKAGE_NAME = "maf-server"
 INSTALL_ROOT_DIR = "/usr/bin"
 LOG_DIR = "/var/log/influxdb"
 DATA_DIR = "/var/lib/influxdb"
@@ -105,10 +105,12 @@ supported_packages = {
 
 def print_banner():
     logging.info("""
-  ___       __ _          ___  ___
- |_ _|_ _  / _| |_  ___ _|   \\| _ )
-  | || ' \\|  _| | || \\ \\ / |) | _ \\
- |___|_||_|_| |_|\\_,_/_\\_\\___/|___/
+ __  __    _    _____   ____  _____ ______     _______ ____  
+|  \/  |  / \  |  ___| / ___|| ____|  _ \ \   / / ____|  _ \ 
+| |\/| | / _ \ | |_    \___ \|  _| | |_) \ \ / /|  _| | |_) |
+| |  | |/ ___ \|  _|    ___) | |___|  _ < \ V / | |___|  _ < 
+|_|  |_/_/   \_\_|     |____/|_____|_| \_\ \_/  |_____|_| \_\
+
   Build Script
 """)
 
@@ -658,8 +660,7 @@ def package(build_output, pkg_name, version, nightly=False, iteration=1, static=
                         package_arch = arch
                     if not release and not nightly:
                         # For non-release builds, just use the commit hash as the version
-                        package_version = "{}~{}".format(version,
-                                                         get_current_commit(short=True))
+                        package_version = "{}".format(version)
                         package_iteration = "0"
                     package_build_root = build_root
                     current_location = build_output[platform][arch]
