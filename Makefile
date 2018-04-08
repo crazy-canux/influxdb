@@ -85,10 +85,10 @@ test-all: vet
 	go test ./...
 
 package:
-	./build.py --package --platform=linux --arch=amd64 --clean --no-get --version=1.6.0 --iteration=1
+	./build.py --package --platform=linux --arch=amd64 --clean --no-get --version=1.5.2 --iteration=1
 
 win-package:
-	./build.py --package --platform=windows --arch=amd64 --clean --no-get --version=1.6.0 --iteration=1
+	./build.py --package --platform=windows --arch=amd64 --clean --no-get --version=1.5.2 --iteration=1
 
 clean:
 	rm -f influxdb

@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="8c934dca-2b40-473b-ae5c-88f75fedf237" name="Default" comment="" />
+    <list default="true" id="8c934dca-2b40-473b-ae5c-88f75fedf237" name="Default" comment="">
+      <change beforePath="$PROJECT_DIR$/Makefile" afterPath="$PROJECT_DIR$/Makefile" />
+      <change beforePath="$PROJECT_DIR$/build/maf-server-1.6.0.x86_64.rpm" afterPath="" />
+      <change beforePath="$PROJECT_DIR$/build/maf-server-1.6.0_linux_amd64.tar.gz" afterPath="" />
+      <change beforePath="$PROJECT_DIR$/build/maf-server_1.6.0_amd64.deb" afterPath="" />
+    </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="TRACKING_ENABLED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -43,11 +48,11 @@
           </provider>
         </entry>
       </file>
-      <file leaf-file-name="post-install.sh" pinned="false" current-in-tab="true">
+      <file leaf-file-name="post-install.sh" pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/scripts/post-install.sh">
           <provider selected="true" editor-type-id="text-editor">
             <state relative-caret-position="646">
-              <caret line="38" column="0" lean-forward="true" selection-start-line="38" selection-start-column="0" selection-end-line="38" selection-end-column="0" />
+              <caret line="38" column="0" lean-forward="false" selection-start-line="38" selection-start-column="0" selection-end-line="38" selection-end-column="0" />
               <folding />
             </state>
           </provider>
@@ -73,11 +78,11 @@
           </provider>
         </entry>
       </file>
-      <file leaf-file-name="Makefile" pinned="false" current-in-tab="false">
+      <file leaf-file-name="Makefile" pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/Makefile">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="375">
-              <caret line="87" column="101" lean-forward="false" selection-start-line="87" selection-start-column="101" selection-end-line="87" selection-end-column="101" />
+            <state relative-caret-position="426">
+              <caret line="90" column="88" lean-forward="false" selection-start-line="90" selection-start-column="88" selection-end-line="90" selection-end-column="88" />
               <folding />
             </state>
           </provider>
@@ -137,8 +142,8 @@
         <option value="$PROJECT_DIR$/etc/config.sample.toml" />
         <option value="$PROJECT_DIR$/Godeps" />
         <option value="$PROJECT_DIR$/Gopkg.lock" />
-        <option value="$PROJECT_DIR$/Makefile" />
         <option value="$PROJECT_DIR$/build.py" />
+        <option value="$PROJECT_DIR$/Makefile" />
       </list>
     </option>
   </component>
@@ -176,11 +181,6 @@
             <path>
               <item name="influxdb" type="b2602c69:ProjectViewProjectNode" />
               <item name="influxdb" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="influxdb" type="b2602c69:ProjectViewProjectNode" />
-              <item name="influxdb" type="462c0819:PsiDirectoryNode" />
-              <item name="scripts" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
               <item name="influxdb" type="b2602c69:ProjectViewProjectNode" />
@@ -248,7 +248,7 @@
       <window_info id="Version Control" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
       <window_info id="Run" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="2" side_tool="false" content_ui="tabs" />
       <window_info id="Structure" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="1" side_tool="false" content_ui="tabs" />
-      <window_info id="Terminal" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.44022772" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
+      <window_info id="Terminal" active="true" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="true" show_stripe_button="true" weight="0.44022772" sideWeight="0.5" order="7" side_tool="false" content_ui="tabs" />
       <window_info id="Favorites" active="false" anchor="left" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.33" sideWeight="0.5" order="2" side_tool="true" content_ui="tabs" />
       <window_info id="Debug" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.4" sideWeight="0.5" order="3" side_tool="false" content_ui="tabs" />
       <window_info id="Cvs" active="false" anchor="bottom" auto_hide="false" internal_type="DOCKED" type="DOCKED" visible="false" show_stripe_button="true" weight="0.25" sideWeight="0.5" order="4" side_tool="false" content_ui="tabs" />
@@ -524,14 +524,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/Makefile">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="375">
-          <caret line="87" column="101" lean-forward="false" selection-start-line="87" selection-start-column="101" selection-end-line="87" selection-end-column="101" />
-          <folding />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/build.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="79">
@@ -569,7 +561,15 @@
     <entry file="file://$PROJECT_DIR$/scripts/post-install.sh">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="646">
-          <caret line="38" column="0" lean-forward="true" selection-start-line="38" selection-start-column="0" selection-end-line="38" selection-end-column="0" />
+          <caret line="38" column="0" lean-forward="false" selection-start-line="38" selection-start-column="0" selection-end-line="38" selection-end-column="0" />
+          <folding />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/Makefile">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="426">
+          <caret line="90" column="88" lean-forward="false" selection-start-line="90" selection-start-column="88" selection-end-line="90" selection-end-column="88" />
           <folding />
         </state>
       </provider>
