@@ -426,7 +426,7 @@ type IteratorScanner interface {
 var SkipDefault = interface{}(0)
 
 // NewIteratorScanner produces an IteratorScanner for the Iterator.
-func NewIteratorScanner(input Iterator, keys []string, defaultValue interface{}) IteratorScanner {
+func NewIteratorScanner(input Iterator, keys []influxql.VarRef, defaultValue interface{}) IteratorScanner {
 	switch input := input.(type) {
 	case FloatIterator:
 		return newFloatIteratorScanner(input, keys, defaultValue)
@@ -747,6 +747,15 @@ func (opt IteratorOptions) SeekTime() int64 {
 		return opt.StartTime
 	}
 	return opt.EndTime
+}
+
+// StopTime returns the time the iterator should end at.
+// For ascending iterators this is the end time, for descending iterators it's the start time.
+func (opt IteratorOptions) StopTime() int64 {
+	if opt.Ascending {
+		return opt.EndTime
+	}
+	return opt.StartTime
 }
 
 // Window returns the time window [start,end) that t falls within.

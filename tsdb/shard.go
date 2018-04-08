@@ -696,6 +696,16 @@ func (s *Shard) DeleteSeriesRange(itr SeriesIterator, min, max int64) error {
 	return engine.DeleteSeriesRange(itr, min, max)
 }
 
+// DeleteSeriesRangeWithPredicate deletes all values from for seriesKeys between min and max (inclusive)
+// for which predicate() returns true. If predicate() is nil, then all values in range are deleted.
+func (s *Shard) DeleteSeriesRangeWithPredicate(itr SeriesIterator, min, max int64, predicate func(name []byte, tags models.Tags) bool) error {
+	engine, err := s.engine()
+	if err != nil {
+		return err
+	}
+	return engine.DeleteSeriesRangeWithPredicate(itr, min, max, predicate)
+}
+
 // DeleteMeasurement deletes a measurement and all underlying series.
 func (s *Shard) DeleteMeasurement(name []byte) error {
 	engine, err := s.engine()
@@ -824,12 +834,20 @@ func (s *Shard) CreateIterator(ctx context.Context, m *influxql.Measurement, opt
 	return engine.CreateIterator(ctx, m.Name, opt)
 }
 
-func (s *Shard) CreateCursor(ctx context.Context, r *CursorRequest) (Cursor, error) {
+func (s *Shard) CreateSeriesCursor(ctx context.Context, req SeriesCursorRequest, cond influxql.Expr) (SeriesCursor, error) {
+	index, err := s.Index()
+	if err != nil {
+		return nil, err
+	}
+	return newSeriesCursor(req, IndexSet{Indexes: []Index{index}, SeriesFile: s.sfile}, cond)
+}
+
+func (s *Shard) CreateCursorIterator(ctx context.Context) (CursorIterator, error) {
 	engine, err := s.engine()
 	if err != nil {
 		return nil, err
 	}
-	return engine.CreateCursor(ctx, r)
+	return engine.CreateCursorIterator(ctx)
 }
 
 // FieldDimensions returns unique sets of fields and dimensions across a list of sources.
@@ -1333,6 +1351,28 @@ func (a Shards) IteratorCost(measurement string, opt query.IteratorOptions) (que
 	}
 	wg.Wait()
 	return costs, costerr
+}
+
+func (a Shards) CreateSeriesCursor(ctx context.Context, req SeriesCursorRequest, cond influxql.Expr) (_ SeriesCursor, err error) {
+	var (
+		idxs  []Index
+		sfile *SeriesFile
+	)
+	for _, sh := range a {
+		var idx Index
+		if idx, err = sh.Index(); err == nil {
+			idxs = append(idxs, idx)
+		}
+		if sfile == nil {
+			sfile, _ = sh.seriesFile()
+		}
+	}
+
+	if sfile == nil {
+		return nil, errors.New("CreateSeriesCursor: no series file")
+	}
+
+	return newSeriesCursor(req, IndexSet{Indexes: idxs, SeriesFile: sfile}, cond)
 }
 
 func (a Shards) ExpandSources(sources influxql.Sources) (influxql.Sources, error) {

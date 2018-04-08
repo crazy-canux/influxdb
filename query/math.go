@@ -1,15 +1,15 @@
 package query
 
 import (
+	"fmt"
 	"math"
-	"time"
 
 	"github.com/influxdata/influxql"
 )
 
 func isMathFunction(call *influxql.Call) bool {
 	switch call.Name {
-	case "sin", "cos", "tan":
+	case "sin", "cos", "tan", "floor", "ceil", "round":
 		return true
 	}
 	return false
@@ -25,67 +25,84 @@ func (MathTypeMapper) CallType(name string, args []influxql.DataType) (influxql.
 	switch name {
 	case "sin", "cos", "tan":
 		return influxql.Float, nil
+	case "floor", "ceil", "round":
+		switch args[0] {
+		case influxql.Float, influxql.Integer, influxql.Unsigned, influxql.Unknown:
+			return args[0], nil
+		default:
+			return influxql.Unknown, fmt.Errorf("invalid argument type for first argument in %s(): %s", name, args[0])
+		}
 	}
 	return influxql.Unknown, nil
 }
 
-type MathValuer struct {
-	Valuer influxql.Valuer
-}
+type MathValuer struct{}
 
-func (v *MathValuer) Value(key string) (interface{}, bool) {
-	if v.Valuer != nil {
-		return v.Valuer.Value(key)
-	}
+var _ influxql.CallValuer = MathValuer{}
+
+func (MathValuer) Value(key string) (interface{}, bool) {
 	return nil, false
 }
 
-func (v *MathValuer) Call(name string, args []influxql.Expr) (interface{}, bool) {
+func (v MathValuer) Call(name string, args []interface{}) (interface{}, bool) {
 	if len(args) == 1 {
+		arg0 := args[0]
 		switch name {
 		case "sin":
-			return v.callTrigFunction(math.Sin, args[0])
+			return v.callTrigFunction(math.Sin, arg0)
 		case "cos":
-			return v.callTrigFunction(math.Cos, args[0])
+			return v.callTrigFunction(math.Cos, arg0)
 		case "tan":
-			return v.callTrigFunction(math.Tan, args[0])
+			return v.callTrigFunction(math.Tan, arg0)
+		case "floor":
+			switch arg0 := arg0.(type) {
+			case float64:
+				return math.Floor(arg0), true
+			case int64, uint64:
+				return arg0, true
+			default:
+				return nil, true
+			}
+		case "ceil":
+			switch arg0 := arg0.(type) {
+			case float64:
+				return math.Ceil(arg0), true
+			case int64, uint64:
+				return arg0, true
+			default:
+				return nil, true
+			}
+		case "round":
+			switch arg0 := arg0.(type) {
+			case float64:
+				return round(arg0), true
+			case int64, uint64:
+				return arg0, true
+			default:
+				return nil, true
+			}
 		}
-	}
-	if v, ok := v.Valuer.(influxql.CallValuer); ok {
-		return v.Call(name, args)
 	}
 	return nil, false
 }
 
-func (v *MathValuer) callTrigFunction(fn func(x float64) float64, arg0 influxql.Expr) (interface{}, bool) {
+func (MathValuer) callTrigFunction(fn func(x float64) float64, arg0 interface{}) (interface{}, bool) {
 	var value float64
 	switch arg0 := arg0.(type) {
-	case *influxql.NumberLiteral:
-		value = arg0.Val
-	case *influxql.IntegerLiteral:
-		value = float64(arg0.Val)
-	case *influxql.VarRef:
-		if v.Valuer == nil {
-			return nil, false
-		} else if val, ok := v.Valuer.Value(arg0.Val); ok {
-			switch val := val.(type) {
-			case float64:
-				value = val
-			case int64:
-				value = float64(val)
-			}
-		} else {
-			return nil, false
-		}
+	case float64:
+		value = arg0
+	case int64:
+		value = float64(arg0)
 	default:
 		return nil, false
 	}
 	return fn(value), true
 }
 
-func (v *MathValuer) Zone() *time.Location {
-	if v, ok := v.Valuer.(influxql.ZoneValuer); ok {
-		return v.Zone()
+func round(x float64) float64 {
+	t := math.Trunc(x)
+	if math.Abs(x-t) >= 0.5 {
+		return t + math.Copysign(1, x)
 	}
-	return nil
+	return t
 }

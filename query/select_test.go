@@ -25,6 +25,7 @@ func TestSelect(t *testing.T) {
 		expr string
 		itrs []query.Iterator
 		rows []query.Row
+		now  time.Time
 		err  string
 	}{
 		{
@@ -1389,8 +1390,8 @@ func TestSelect(t *testing.T) {
 			rows: []query.Row{
 				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{0.7071067811865476}},
 				{Time: 10 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{0.7071067811865476}},
-				{Time: 30 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{nil}},
-				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{nil}},
+				{Time: 30 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{query.NullFloat}},
+				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{query.NullFloat}},
 				{Time: 50 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{1.5811388300841898}},
 			},
 		},
@@ -1420,8 +1421,8 @@ func TestSelect(t *testing.T) {
 			rows: []query.Row{
 				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{0.7071067811865476}},
 				{Time: 10 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{0.7071067811865476}},
-				{Time: 30 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{nil}},
-				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{nil}},
+				{Time: 30 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{query.NullFloat}},
+				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{query.NullFloat}},
 				{Time: 50 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{1.5811388300841898}},
 			},
 		},
@@ -1451,8 +1452,8 @@ func TestSelect(t *testing.T) {
 			rows: []query.Row{
 				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{0.7071067811865476}},
 				{Time: 10 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{0.7071067811865476}},
-				{Time: 30 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{nil}},
-				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{nil}},
+				{Time: 30 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=A")}, Values: []interface{}{query.NullFloat}},
+				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{query.NullFloat}},
 				{Time: 50 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{1.5811388300841898}},
 			},
 		},
@@ -2657,6 +2658,27 @@ func TestSelect(t *testing.T) {
 				{Time: 0 * Second, Series: query.Series{Name: "cpu", Tags: ParseTags("host=B")}, Values: []interface{}{float64(20), float64(5)}},
 			},
 		},
+		{
+			name: "GroupByOffset",
+			q:    `SELECT mean(value) FROM cpu WHERE time >= now() - 2m AND time < now() GROUP BY time(1m, now())`,
+			typ:  influxql.Float,
+			expr: `mean(value::float)`,
+			itrs: []query.Iterator{
+				&FloatIterator{Points: []query.FloatPoint{
+					{Name: "cpu", Tags: ParseTags("region=west,host=A"), Time: 34 * Second, Value: 20},
+					{Name: "cpu", Tags: ParseTags("region=west,host=A"), Time: 57 * Second, Value: 3},
+					{Name: "cpu", Tags: ParseTags("region=west,host=A"), Time: 92 * Second, Value: 100},
+				}},
+				&FloatIterator{Points: []query.FloatPoint{
+					{Name: "cpu", Tags: ParseTags("region=west,host=B"), Time: 45 * Second, Value: 10},
+				}},
+			},
+			rows: []query.Row{
+				{Time: 30 * Second, Series: query.Series{Name: "cpu"}, Values: []interface{}{float64(11)}},
+				{Time: 90 * Second, Series: query.Series{Name: "cpu"}, Values: []interface{}{float64(100)}},
+			},
+			now: mustParseTime("1970-01-01T00:02:30Z"),
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			shardMapper := ShardMapper{
@@ -2692,7 +2714,20 @@ func TestSelect(t *testing.T) {
 
 			stmt := MustParseSelectStatement(tt.q)
 			stmt.OmitTime = true
-			cur, err := query.Select(context.Background(), stmt, &shardMapper, query.SelectOptions{})
+			cur, err := func(stmt *influxql.SelectStatement) (query.Cursor, error) {
+				c, err := query.Compile(stmt, query.CompileOptions{
+					Now: tt.now,
+				})
+				if err != nil {
+					return nil, err
+				}
+
+				p, err := c.Prepare(&shardMapper, query.SelectOptions{})
+				if err != nil {
+					return nil, err
+				}
+				return p.Select(context.Background())
+			}(stmt)
 			if err != nil {
 				if tt.err == "" {
 					t.Fatal(err)
@@ -2703,7 +2738,7 @@ func TestSelect(t *testing.T) {
 				t.Fatal("expected error")
 			} else if a, err := ReadCursor(cur); err != nil {
 				t.Fatalf("unexpected point: %s", err)
-			} else if diff := cmp.Diff(a, tt.rows); diff != "" {
+			} else if diff := cmp.Diff(tt.rows, a); diff != "" {
 				t.Fatalf("unexpected points:\n%s", diff)
 			}
 		})
@@ -2755,7 +2790,7 @@ func TestSelect_Raw(t *testing.T) {
 		t.Errorf("parse error: %s", err)
 	} else if a, err := ReadCursor(cur); err != nil {
 		t.Fatalf("unexpected error: %s", err)
-	} else if diff := cmp.Diff(a, []query.Row{
+	} else if diff := cmp.Diff([]query.Row{
 		{
 			Time: 0 * Second,
 			Series: query.Series{
@@ -2777,7 +2812,7 @@ func TestSelect_Raw(t *testing.T) {
 			},
 			Values: []interface{}{float64(19), int64(19), uint64(19), "c", true},
 		},
-	}); diff != "" {
+	}, a); diff != "" {
 		t.Errorf("unexpected points:\n%s", diff)
 	}
 }
@@ -3666,7 +3701,7 @@ func TestSelect_BinaryExpr(t *testing.T) {
 				t.Fatalf("%s: expected error", test.Name)
 			} else if a, err := ReadCursor(cur); err != nil {
 				t.Fatalf("%s: unexpected error: %s", test.Name, err)
-			} else if diff := cmp.Diff(a, test.Rows); diff != "" {
+			} else if diff := cmp.Diff(test.Rows, a); diff != "" {
 				t.Errorf("%s: unexpected points:\n%s", test.Name, diff)
 			}
 		})
@@ -3744,7 +3779,7 @@ func TestSelect_BinaryExpr_Boolean(t *testing.T) {
 				t.Errorf("%s: parse error: %s", test.Name, err)
 			} else if a, err := ReadCursor(cur); err != nil {
 				t.Fatalf("%s: unexpected error: %s", test.Name, err)
-			} else if diff := cmp.Diff(a, test.Rows); diff != "" {
+			} else if diff := cmp.Diff(test.Rows, a); diff != "" {
 				t.Errorf("%s: unexpected points:\n%s", test.Name, diff)
 			}
 		})
@@ -3826,7 +3861,7 @@ func TestSelect_BinaryExpr_NilValues(t *testing.T) {
 				t.Errorf("%s: parse error: %s", test.Name, err)
 			} else if a, err := ReadCursor(cur); err != nil {
 				t.Fatalf("%s: unexpected error: %s", test.Name, err)
-			} else if diff := cmp.Diff(a, test.Rows); diff != "" {
+			} else if diff := cmp.Diff(test.Rows, a); diff != "" {
 				t.Errorf("%s: unexpected points:\n%s", test.Name, diff)
 			}
 		})

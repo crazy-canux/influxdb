@@ -9,6 +9,9 @@ v1.6.0 [unreleased]
 
 -	[#9429](https://github.com/influxdata/influxdb/pull/9429): Support proxy environment variables in the influx client.
 -	[#9499](https://github.com/influxdata/influxdb/pull/9499): Implement basic trigonometry functions.
+-	[#9643](https://github.com/influxdata/influxdb/pull/9643): Add ability to delete many series with predicate.
+-	[#9632](https://github.com/influxdata/influxdb/pull/9632): Implement floor, ceil, and round functions.
+-	[#9399](https://github.com/influxdata/influxdb/pull/9399): Allow customizing the unix socket group and permissions created by the server.
 
 ### Bugfixes
 
@@ -17,6 +20,12 @@ v1.6.0 [unreleased]
 -	[#9573](https://github.com/influxdata/influxdb/pull/9573): Ensure correct number of tags parsed when commas used.
 -	[#9580](https://github.com/influxdata/influxdb/pull/9580): Fix data race in WAL.
 -	[#9586](https://github.com/influxdata/influxdb/pull/9586): Allow SHOW SERIES kill.
+-	[#9612](https://github.com/influxdata/influxdb/pull/9612): Revert "Use MADV_WILLNEED when loading TSM files".
+-	[#9633](https://github.com/influxdata/influxdb/pull/9633): Fix regression to allow now() to be used as the group by offset again.
+-	[#9647](https://github.com/influxdata/influxdb/pull/9647): Delete deleted shards in retention service.
+-	[#9659](https://github.com/influxdata/influxdb/pull/9659): Ignore index size in Engine.DiskSize().
+-	[#9661](https://github.com/influxdata/influxdb/pull/9661): Fix buildtsi partition key.
+-	[#9665](https://github.com/influxdata/influxdb/pull/9665): Enable casting values from a subquery.
 
 v1.5.0 [2018-03-06]
 -------------------

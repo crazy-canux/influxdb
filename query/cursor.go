@@ -1,10 +1,13 @@
 package query
 
 import (
+	"math"
 	"time"
 
 	"github.com/influxdata/influxql"
 )
+
+var NullFloat interface{} = (*float64)(nil)
 
 // Series represents the metadata about a series.
 type Series struct {
@@ -187,9 +190,10 @@ func (cur *scannerCursorBase) Scan(row *Row) bool {
 	}
 
 	valuer := influxql.ValuerEval{
-		Valuer: &MathValuer{
-			Valuer: influxql.MapValuer(cur.m),
-		},
+		Valuer: influxql.MultiValuer(
+			MathValuer{},
+			influxql.MapValuer(cur.m),
+		),
 		IntegerFloatDivision: true,
 	}
 	for i, expr := range cur.fields {
@@ -198,7 +202,14 @@ func (cur *scannerCursorBase) Scan(row *Row) bool {
 			row.Values[i] = time.Unix(0, row.Time).In(cur.loc)
 			continue
 		}
-		row.Values[i] = valuer.Eval(expr)
+		v := valuer.Eval(expr)
+		if fv, ok := v.(float64); ok && math.IsNaN(fv) {
+			// If the float value is NaN, convert it to a null float
+			// so this can be serialized correctly, but not mistaken for
+			// a null value that needs to be filled.
+			v = NullFloat
+		}
+		row.Values[i] = v
 	}
 	return true
 }
@@ -318,6 +329,96 @@ func (cur *multiScannerCursor) Close() error {
 		}
 	}
 	return err
+}
+
+type filterCursor struct {
+	Cursor
+	// fields holds the mapping of field names to the index in the row
+	// based off of the column metadata. This only contains the fields
+	// we need and will exclude the ones we do not.
+	fields map[string]IteratorMap
+	filter influxql.Expr
+	m      map[string]interface{}
+}
+
+func newFilterCursor(cur Cursor, filter influxql.Expr) *filterCursor {
+	fields := make(map[string]IteratorMap)
+	for _, name := range influxql.ExprNames(filter) {
+		for i, col := range cur.Columns() {
+			if name.Val == col.Val {
+				fields[name.Val] = FieldMap{
+					Index: i,
+					Type:  name.Type,
+				}
+				break
+			}
+		}
+
+		// If the field is not a column, assume it is a tag value.
+		// We do not know what the tag values will be, but there really
+		// isn't any different between NullMap and a TagMap that's pointed
+		// at the wrong location for the purposes described here.
+		if _, ok := fields[name.Val]; !ok {
+			fields[name.Val] = TagMap(name.Val)
+		}
+	}
+	return &filterCursor{
+		Cursor: cur,
+		fields: fields,
+		filter: filter,
+		m:      make(map[string]interface{}),
+	}
+}
+
+func (cur *filterCursor) Scan(row *Row) bool {
+	for cur.Cursor.Scan(row) {
+		// Use the field mappings to prepare the map for the valuer.
+		for name, f := range cur.fields {
+			cur.m[name] = f.Value(row)
+		}
+
+		valuer := influxql.ValuerEval{
+			Valuer: influxql.MapValuer(cur.m),
+		}
+		if valuer.EvalBool(cur.filter) {
+			// Passes the filter! Return true. We no longer need to
+			// search for a suitable value.
+			return true
+		}
+	}
+	return false
+}
+
+type nullCursor struct {
+	columns []influxql.VarRef
+}
+
+func newNullCursor(fields []*influxql.Field) *nullCursor {
+	columns := make([]influxql.VarRef, len(fields))
+	for i, f := range fields {
+		columns[i].Val = f.Name()
+	}
+	return &nullCursor{columns: columns}
+}
+
+func (cur *nullCursor) Scan(row *Row) bool {
+	return false
+}
+
+func (cur *nullCursor) Stats() IteratorStats {
+	return IteratorStats{}
+}
+
+func (cur *nullCursor) Err() error {
+	return nil
+}
+
+func (cur *nullCursor) Columns() []influxql.VarRef {
+	return cur.columns
+}
+
+func (cur *nullCursor) Close() error {
+	return nil
 }
 
 // DrainCursor will read and discard all values from a Cursor and return the error
