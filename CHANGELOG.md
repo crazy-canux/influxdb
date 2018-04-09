@@ -1,31 +1,32 @@
-v1.6.0 [unreleased]
+v1.5.2 [unreleased]
 -------------------
-
-### Breaking changes
-
--	If math is used with the same selector multiple times, it will now act as a selector rather than an aggregate. See [#9563](https://github.com/influxdata/influxdb/pull/9563) for details.
 
 ### Features
 
--	[#9429](https://github.com/influxdata/influxdb/pull/9429): Support proxy environment variables in the influx client.
--	[#9499](https://github.com/influxdata/influxdb/pull/9499): Implement basic trigonometry functions.
--	[#9643](https://github.com/influxdata/influxdb/pull/9643): Add ability to delete many series with predicate.
--	[#9632](https://github.com/influxdata/influxdb/pull/9632): Implement floor, ceil, and round functions.
--	[#9399](https://github.com/influxdata/influxdb/pull/9399): Allow customizing the unix socket group and permissions created by the server.
+-	[#9680](https://github.com/influxdata/influxdb/pull/9680): Check for root user when running buildtsi.
 
 ### Bugfixes
 
--	[#9553](https://github.com/influxdata/influxdb/pull/9553): Support setting the log level through the environment variable.
--	[#9551](https://github.com/influxdata/influxdb/pull/9551): Fix panic when checking fieldsets.
--	[#9573](https://github.com/influxdata/influxdb/pull/9573): Ensure correct number of tags parsed when commas used.
--	[#9580](https://github.com/influxdata/influxdb/pull/9580): Fix data race in WAL.
--	[#9586](https://github.com/influxdata/influxdb/pull/9586): Allow SHOW SERIES kill.
--	[#9612](https://github.com/influxdata/influxdb/pull/9612): Revert "Use MADV_WILLNEED when loading TSM files".
--	[#9633](https://github.com/influxdata/influxdb/pull/9633): Fix regression to allow now() to be used as the group by offset again.
--	[#9647](https://github.com/influxdata/influxdb/pull/9647): Delete deleted shards in retention service.
--	[#9659](https://github.com/influxdata/influxdb/pull/9659): Ignore index size in Engine.DiskSize().
--	[#9661](https://github.com/influxdata/influxdb/pull/9661): Fix buildtsi partition key.
--	[#9665](https://github.com/influxdata/influxdb/pull/9665): Enable casting values from a subquery.
+-	[#9638](https://github.com/influxdata/influxdb/pull/9638): backport: check for failure case where backup dir has no manifest files.
+-	[#9651](https://github.com/influxdata/influxdb/pull/9651): Fix regression to allow now() to be used as the group by offset again.
+-	[#9614](https://github.com/influxdata/influxdb/pull/9614): 1.5: Revert "Use MADV_WILLNEED when loading TSM files".
+-	[#9660](https://github.com/influxdata/influxdb/pull/9660): Ignore index size in Engine.DiskSize().
+-	[#9662](https://github.com/influxdata/influxdb/pull/9662): [1.5] Fix buildtsi partition key.
+
+### Features
+
+-	[#9672](https://github.com/influxdata/influxdb/pull/9672): [1.5] Adjustable TSI Compaction Threshold
+
+v1.5.1 [2018-03-20]
+-------------------
+
+### Bugfixes
+
+-	[#9542](https://github.com/influxdata/influxdb/pull/9542): Allow time variable to be case insensitive again.
+-	[#9564](https://github.com/influxdata/influxdb/pull/9564): Support setting the log level through the environment variable.
+-	[#9575](https://github.com/influxdata/influxdb/pull/9575): Ensure correct number of tags parsed.
+-	[#9566](https://github.com/influxdata/influxdb/pull/9566): Fix panic when checking fieldsets.
+-	[#9587](https://github.com/influxdata/influxdb/pull/9587): Fix data race in WAL.
 
 v1.5.0 [2018-03-06]
 -------------------
