@@ -93,6 +93,7 @@ win-package:
 clean:
 	rm -f influxdb
 	rm -f influxdb.exe
+	rm -rf ./build
 
 docker-image:
 	./build.py --package --platform=linux --arch=amd64
