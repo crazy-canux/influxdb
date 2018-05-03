@@ -26,6 +26,9 @@ import (
 const (
 	// The extension used to describe temporary snapshot files.
 	TmpTSMFileExtension = "tmp"
+
+	// The extension used to describe corrupt snapshot files.
+	BadTSMFileExtension = "bad"
 )
 
 // TSMFile represents an on-disk TSM file.
@@ -488,9 +491,15 @@ func (f *FileStore) Open() error {
 				zap.Int("id", idx),
 				zap.Duration("duration", time.Since(start)))
 
+			// If we are unable to read a TSM file then log the error, rename
+			// the file, and continue loading the shard without it.
 			if err != nil {
-				readerC <- &res{r: df, err: fmt.Errorf("error opening memory map for file %s: %v", file.Name(), err)}
-				return
+				f.logger.Error("Cannot read corrupt tsm file, renaming", zap.String("path", file.Name()), zap.Int("id", idx), zap.Error(err))
+				if e := os.Rename(file.Name(), file.Name()+"."+BadTSMFileExtension); e != nil {
+					f.logger.Error("Cannot rename corrupt tsm file", zap.String("path", file.Name()), zap.Int("id", idx), zap.Error(e))
+					readerC <- &res{r: df, err: fmt.Errorf("cannot rename corrupt file %s: %v", file.Name(), e)}
+					return
+				}
 			}
 			readerC <- &res{r: df}
 		}(i, file)
@@ -500,10 +509,12 @@ func (f *FileStore) Open() error {
 	for range files {
 		res := <-readerC
 		if res.err != nil {
-
 			return res.err
+		} else if res.r == nil {
+			continue
 		}
 		f.files = append(f.files, res.r)
+
 		// Accumulate file store size stats
 		atomic.AddInt64(&f.stats.DiskBytes, int64(res.r.Size()))
 		for _, ts := range res.r.TombstoneFiles() {
@@ -530,7 +541,10 @@ func (f *FileStore) Close() error {
 	defer f.mu.Unlock()
 
 	for _, file := range f.files {
-		file.Close()
+		err := file.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	f.lastFileStats = nil
@@ -1307,98 +1321,3 @@ type tsmReaders []TSMFile
 func (a tsmReaders) Len() int           { return len(a) }
 func (a tsmReaders) Less(i, j int) bool { return a[i].Path() < a[j].Path() }
 func (a tsmReaders) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-
-type seriesKey struct {
-	key []byte
-	typ byte
-}
-
-// merge merges multiple channels in parallel by recursively splitting the channels
-// until a simple two-way merge can be performed.
-func merge(c ...chan seriesKey) chan seriesKey {
-	if len(c) == 0 {
-		m := make(chan seriesKey)
-		close(m)
-		return m
-	}
-
-	// Just one, drain it
-	if len(c) == 1 {
-		m := make(chan seriesKey)
-		go func() {
-			if c[0] != nil {
-				for v := range c[0] {
-					m <- v
-				}
-			}
-			close(m)
-		}()
-		return m
-	}
-
-	// More than two, split them up recursively
-	if len(c) > 2 {
-		a := merge(c[:len(c)/2]...)
-		b := merge(c[len(c)/2:]...)
-		return merge(a, b)
-	}
-
-	// Merge the two streams and drop duplicates between then
-	m := make(chan seriesKey, 1)
-	a, b := c[0], c[1]
-	go func() {
-		// buffer a and b values
-		var av, bv seriesKey
-		if a != nil {
-			av = <-a
-		}
-		if b != nil {
-			bv = <-b
-		}
-		for {
-			if len(av.key) == 0 && len(bv.key) == 0 {
-				break
-			}
-
-			if len(av.key) == 0 {
-				m <- bv
-				break
-			}
-
-			if len(bv.key) == 0 {
-				m <- av
-				break
-			}
-
-			cmp := bytes.Compare(av.key, bv.key)
-			if cmp < 0 {
-				// Send a's value, and re-prime a buffer
-				m <- av
-				av = <-a
-			} else if cmp == 0 {
-				// Send a's value, and re-prime a and b buffers
-				m <- av
-				av = <-a
-				bv = <-b
-			} else {
-				// Send b's value, and re-prime b buffer
-				m <- bv
-				bv = <-b
-			}
-		}
-
-		if a != nil {
-			for av := range a {
-				m <- av
-			}
-		}
-
-		if b != nil {
-			for bv := range b {
-				m <- bv
-			}
-		}
-		close(m)
-	}()
-	return m
-}

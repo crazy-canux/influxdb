@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/influxdata/influxdb/pkg/escape"
 )
@@ -1299,7 +1301,8 @@ func unescapeStringField(in string) string {
 }
 
 // NewPoint returns a new point with the given measurement name, tags, fields and timestamp.  If
-// an unsupported field value (NaN) or out of range time is passed, this function returns an error.
+// an unsupported field value (NaN, or +/-Inf) or out of range time is passed, this function
+// returns an error.
 func NewPoint(name string, tags Tags, fields Fields, t time.Time) (Point, error) {
 	key, err := pointKey(name, tags, fields, t)
 	if err != nil {
@@ -1330,11 +1333,17 @@ func pointKey(measurement string, tags Tags, fields Fields, t time.Time) ([]byte
 		switch value := value.(type) {
 		case float64:
 			// Ensure the caller validates and handles invalid field values
+			if math.IsInf(value, 0) {
+				return nil, fmt.Errorf("+/-Inf is an unsupported value for field %s", key)
+			}
 			if math.IsNaN(value) {
 				return nil, fmt.Errorf("NaN is an unsupported value for field %s", key)
 			}
 		case float32:
 			// Ensure the caller validates and handles invalid field values
+			if math.IsInf(float64(value), 0) {
+				return nil, fmt.Errorf("+/-Inf is an unsupported value for field %s", key)
+			}
 			if math.IsNaN(float64(value)) {
 				return nil, fmt.Errorf("NaN is an unsupported value for field %s", key)
 			}
@@ -2391,4 +2400,31 @@ func appendField(b []byte, k string, v interface{}) []byte {
 	}
 
 	return b
+}
+
+// ValidKeyToken returns true if the token used for measurement, tag key, or tag
+// value is a valid unicode string and only contains printable, non-replacement characters.
+func ValidKeyToken(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsPrint(r) || r == unicode.ReplacementChar {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidKeyTokens returns true if the measurement name and all tags are valid.
+func ValidKeyTokens(name string, tags Tags) bool {
+	if !ValidKeyToken(name) {
+		return false
+	}
+	for _, tag := range tags {
+		if !ValidKeyToken(string(tag.Key)) || !ValidKeyToken(string(tag.Value)) {
+			return false
+		}
+	}
+	return true
 }

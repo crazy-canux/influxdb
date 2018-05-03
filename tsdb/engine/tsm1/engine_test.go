@@ -726,6 +726,7 @@ func TestEngine_CreateIterator_TSM_Ascending(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer itr.Close()
 			fitr := itr.(query.FloatIterator)
 
 			if p, err := fitr.Next(); err != nil {
@@ -783,6 +784,7 @@ func TestEngine_CreateIterator_TSM_Descending(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer itr.Close()
 			fitr := itr.(query.FloatIterator)
 
 			if p, err := fitr.Next(); err != nil {
@@ -1233,20 +1235,233 @@ func TestEngine_DeleteSeriesRangeWithPredicate(t *testing.T) {
 			}
 
 			itr := &seriesIterator{keys: [][]byte{[]byte("cpu,host=A"), []byte("cpu,host=B"), []byte("cpu,host=C"), []byte("mem,host=B"), []byte("mem,host=C")}}
-			predicate := func(name []byte, tags models.Tags) bool {
+			predicate := func(name []byte, tags models.Tags) (int64, int64, bool) {
 				if bytes.Equal(name, []byte("mem")) {
-					return true
+					return math.MinInt64, math.MaxInt64, true
 				}
 				if bytes.Equal(name, []byte("cpu")) {
 					for _, tag := range tags {
 						if bytes.Equal(tag.Key, []byte("host")) && bytes.Equal(tag.Value, []byte("B")) {
-							return true
+							return math.MinInt64, math.MaxInt64, true
 						}
 					}
 				}
-				return false
+				return math.MinInt64, math.MaxInt64, false
 			}
-			if err := e.DeleteSeriesRangeWithPredicate(itr, math.MinInt64, math.MaxInt64, predicate); err != nil {
+			if err := e.DeleteSeriesRangeWithPredicate(itr, predicate); err != nil {
+				t.Fatalf("failed to delete series: %v", err)
+			}
+
+			keys = e.FileStore.Keys()
+			if exp, got := 3, len(keys); exp != got {
+				t.Fatalf("series count mismatch: exp %v, got %v", exp, got)
+			}
+
+			exps := []string{"cpu,host=A#!~#value", "cpu,host=C#!~#value", "disk,host=C#!~#value"}
+			for _, exp := range exps {
+				if _, ok := keys[exp]; !ok {
+					t.Fatalf("wrong series deleted: exp %v, got %v", exps, keys)
+				}
+			}
+
+			// Check that the series still exists in the index
+			indexSet := tsdb.IndexSet{Indexes: []tsdb.Index{e.index}, SeriesFile: e.sfile}
+			iter, err := indexSet.MeasurementSeriesIDIterator([]byte("cpu"))
+			if err != nil {
+				t.Fatalf("iterator error: %v", err)
+			}
+			defer iter.Close()
+
+			elem, err := iter.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if elem.SeriesID == 0 {
+				t.Fatalf("series index mismatch: EOF, exp 2 series")
+			}
+
+			// Lookup series.
+			name, tags := e.sfile.Series(elem.SeriesID)
+			if got, exp := name, []byte("cpu"); !bytes.Equal(got, exp) {
+				t.Fatalf("series mismatch: got %s, exp %s", got, exp)
+			}
+
+			if !tags.Equal(models.NewTags(map[string]string{"host": "A"})) && !tags.Equal(models.NewTags(map[string]string{"host": "C"})) {
+				t.Fatalf(`series mismatch: got %s, exp either "host=A" or "host=C"`, tags)
+			}
+			iter.Close()
+
+			// Deleting remaining series should remove them from the series.
+			itr = &seriesIterator{keys: [][]byte{[]byte("cpu,host=A"), []byte("cpu,host=C")}}
+			if err := e.DeleteSeriesRange(itr, 0, 9000000000); err != nil {
+				t.Fatalf("failed to delete series: %v", err)
+			}
+
+			indexSet = tsdb.IndexSet{Indexes: []tsdb.Index{e.index}, SeriesFile: e.sfile}
+			if iter, err = indexSet.MeasurementSeriesIDIterator([]byte("cpu")); err != nil {
+				t.Fatalf("iterator error: %v", err)
+			}
+			if iter == nil {
+				return
+			}
+
+			defer iter.Close()
+			if elem, err = iter.Next(); err != nil {
+				t.Fatal(err)
+			}
+			if elem.SeriesID != 0 {
+				t.Fatalf("got an undeleted series id, but series should be dropped from index")
+			}
+		})
+	}
+}
+
+// Tests that a nil predicate deletes all values returned from the series iterator.
+func TestEngine_DeleteSeriesRangeWithPredicate_Nil(t *testing.T) {
+	for _, index := range tsdb.RegisteredIndexes() {
+		t.Run(index, func(t *testing.T) {
+			// Create a few points.
+			p1 := MustParsePointString("cpu,host=A value=1.1 6000000000") // Should not be deleted
+			p2 := MustParsePointString("cpu,host=A value=1.2 2000000000") // Should not be deleted
+			p3 := MustParsePointString("cpu,host=B value=1.3 3000000000")
+			p4 := MustParsePointString("cpu,host=B value=1.3 4000000000")
+			p5 := MustParsePointString("cpu,host=C value=1.3 5000000000") // Should not be deleted
+			p6 := MustParsePointString("mem,host=B value=1.3 1000000000")
+			p7 := MustParsePointString("mem,host=C value=1.3 1000000000")
+			p8 := MustParsePointString("disk,host=C value=1.3 1000000000") // Should not be deleted
+
+			e, err := NewEngine(index)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// mock the planner so compactions don't run during the test
+			e.CompactionPlan = &mockPlanner{}
+			if err := e.Open(); err != nil {
+				t.Fatal(err)
+			}
+			defer e.Close()
+
+			for _, p := range []models.Point{p1, p2, p3, p4, p5, p6, p7, p8} {
+				if err := e.CreateSeriesIfNotExists(p.Key(), p.Name(), p.Tags()); err != nil {
+					t.Fatalf("create series index error: %v", err)
+				}
+			}
+
+			if err := e.WritePoints([]models.Point{p1, p2, p3, p4, p5, p6, p7, p8}); err != nil {
+				t.Fatalf("failed to write points: %s", err.Error())
+			}
+			if err := e.WriteSnapshot(); err != nil {
+				t.Fatalf("failed to snapshot: %s", err.Error())
+			}
+
+			keys := e.FileStore.Keys()
+			if exp, got := 6, len(keys); exp != got {
+				t.Fatalf("series count mismatch: exp %v, got %v", exp, got)
+			}
+
+			itr := &seriesIterator{keys: [][]byte{[]byte("cpu,host=A"), []byte("cpu,host=B"), []byte("cpu,host=C"), []byte("mem,host=B"), []byte("mem,host=C")}}
+			if err := e.DeleteSeriesRangeWithPredicate(itr, nil); err != nil {
+				t.Fatalf("failed to delete series: %v", err)
+			}
+
+			keys = e.FileStore.Keys()
+			if exp, got := 1, len(keys); exp != got {
+				t.Fatalf("series count mismatch: exp %v, got %v", exp, got)
+			}
+
+			// Check that the series still exists in the index
+			indexSet := tsdb.IndexSet{Indexes: []tsdb.Index{e.index}, SeriesFile: e.sfile}
+			iter, err := indexSet.MeasurementSeriesIDIterator([]byte("cpu"))
+			if err != nil {
+				t.Fatalf("iterator error: %v", err)
+			} else if iter == nil {
+				return
+			}
+			defer iter.Close()
+
+			if elem, err := iter.Next(); err != nil {
+				t.Fatal(err)
+			} else if elem.SeriesID != 0 {
+				t.Fatalf("got an undeleted series id, but series should be dropped from index")
+			}
+
+			// Check that disk series still exists
+			iter, err = indexSet.MeasurementSeriesIDIterator([]byte("disk"))
+			if err != nil {
+				t.Fatalf("iterator error: %v", err)
+			} else if iter == nil {
+				return
+			}
+			defer iter.Close()
+
+			if elem, err := iter.Next(); err != nil {
+				t.Fatal(err)
+			} else if elem.SeriesID == 0 {
+				t.Fatalf("got an undeleted series id, but series should be dropped from index")
+			}
+		})
+	}
+}
+func TestEngine_DeleteSeriesRangeWithPredicate_FlushBatch(t *testing.T) {
+	for _, index := range tsdb.RegisteredIndexes() {
+		t.Run(index, func(t *testing.T) {
+			// Create a few points.
+			p1 := MustParsePointString("cpu,host=A value=1.1 6000000000") // Should not be deleted
+			p2 := MustParsePointString("cpu,host=A value=1.2 2000000000") // Should not be deleted
+			p3 := MustParsePointString("cpu,host=B value=1.3 3000000000")
+			p4 := MustParsePointString("cpu,host=B value=1.3 4000000000")
+			p5 := MustParsePointString("cpu,host=C value=1.3 5000000000") // Should not be deleted
+			p6 := MustParsePointString("mem,host=B value=1.3 1000000000")
+			p7 := MustParsePointString("mem,host=C value=1.3 1000000000")
+			p8 := MustParsePointString("disk,host=C value=1.3 1000000000") // Should not be deleted
+
+			e, err := NewEngine(index)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// mock the planner so compactions don't run during the test
+			e.CompactionPlan = &mockPlanner{}
+			if err := e.Open(); err != nil {
+				t.Fatal(err)
+			}
+			defer e.Close()
+
+			for _, p := range []models.Point{p1, p2, p3, p4, p5, p6, p7, p8} {
+				if err := e.CreateSeriesIfNotExists(p.Key(), p.Name(), p.Tags()); err != nil {
+					t.Fatalf("create series index error: %v", err)
+				}
+			}
+
+			if err := e.WritePoints([]models.Point{p1, p2, p3, p4, p5, p6, p7, p8}); err != nil {
+				t.Fatalf("failed to write points: %s", err.Error())
+			}
+			if err := e.WriteSnapshot(); err != nil {
+				t.Fatalf("failed to snapshot: %s", err.Error())
+			}
+
+			keys := e.FileStore.Keys()
+			if exp, got := 6, len(keys); exp != got {
+				t.Fatalf("series count mismatch: exp %v, got %v", exp, got)
+			}
+
+			itr := &seriesIterator{keys: [][]byte{[]byte("cpu,host=A"), []byte("cpu,host=B"), []byte("cpu,host=C"), []byte("mem,host=B"), []byte("mem,host=C")}}
+			predicate := func(name []byte, tags models.Tags) (int64, int64, bool) {
+				if bytes.Equal(name, []byte("mem")) {
+					return 1000000000, 1000000000, true
+				}
+
+				if bytes.Equal(name, []byte("cpu")) {
+					for _, tag := range tags {
+						if bytes.Equal(tag.Key, []byte("host")) && bytes.Equal(tag.Value, []byte("B")) {
+							return 3000000000, 4000000000, true
+						}
+					}
+				}
+				return math.MinInt64, math.MaxInt64, false
+			}
+			if err := e.DeleteSeriesRangeWithPredicate(itr, predicate); err != nil {
 				t.Fatalf("failed to delete series: %v", err)
 			}
 
@@ -1536,6 +1751,7 @@ func TestEngine_CreateCursor_Ascending(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer cur.Close()
 
 			fcur := cur.(tsdb.FloatBatchCursor)
 			ts, vs := fcur.Next()
@@ -1595,6 +1811,7 @@ func TestEngine_CreateCursor_Descending(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer cur.Close()
 
 			fcur := cur.(tsdb.FloatBatchCursor)
 			ts, vs := fcur.Next()
@@ -1675,75 +1892,6 @@ func TestEngine_DisableEnableCompactions_Concurrent(t *testing.T) {
 	}
 }
 
-func BenchmarkEngine_CreateIterator_Count_1K(b *testing.B) {
-	benchmarkEngineCreateIteratorCount(b, 1000)
-}
-func BenchmarkEngine_CreateIterator_Count_100K(b *testing.B) {
-	benchmarkEngineCreateIteratorCount(b, 100000)
-}
-func BenchmarkEngine_CreateIterator_Count_1M(b *testing.B) {
-	benchmarkEngineCreateIteratorCount(b, 1000000)
-}
-
-func benchmarkEngineCreateIteratorCount(b *testing.B, pointN int) {
-	benchmarkIterator(b, query.IteratorOptions{
-		Expr:      influxql.MustParseExpr("count(value)"),
-		Ascending: true,
-		StartTime: influxql.MinTime,
-		EndTime:   influxql.MaxTime,
-	}, pointN)
-}
-
-func BenchmarkEngine_CreateIterator_First_1K(b *testing.B) {
-	benchmarkEngineCreateIteratorFirst(b, 1000)
-}
-func BenchmarkEngine_CreateIterator_First_100K(b *testing.B) {
-	benchmarkEngineCreateIteratorFirst(b, 100000)
-}
-func BenchmarkEngine_CreateIterator_First_1M(b *testing.B) {
-	benchmarkEngineCreateIteratorFirst(b, 1000000)
-}
-
-func benchmarkEngineCreateIteratorFirst(b *testing.B, pointN int) {
-	benchmarkIterator(b, query.IteratorOptions{
-		Expr:       influxql.MustParseExpr("first(value)"),
-		Dimensions: []string{"host"},
-		Ascending:  true,
-		StartTime:  influxql.MinTime,
-		EndTime:    influxql.MaxTime,
-	}, pointN)
-}
-
-func BenchmarkEngine_CreateIterator_Last_1K(b *testing.B) {
-	benchmarkEngineCreateIteratorLast(b, 1000)
-}
-func BenchmarkEngine_CreateIterator_Last_100K(b *testing.B) {
-	benchmarkEngineCreateIteratorLast(b, 100000)
-}
-func BenchmarkEngine_CreateIterator_Last_1M(b *testing.B) {
-	benchmarkEngineCreateIteratorLast(b, 1000000)
-}
-
-func benchmarkEngineCreateIteratorLast(b *testing.B, pointN int) {
-	benchmarkIterator(b, query.IteratorOptions{
-		Expr:       influxql.MustParseExpr("last(value)"),
-		Dimensions: []string{"host"},
-		Ascending:  true,
-		StartTime:  influxql.MinTime,
-		EndTime:    influxql.MaxTime,
-	}, pointN)
-}
-
-func BenchmarkEngine_CreateIterator_Limit_1K(b *testing.B) {
-	benchmarkEngineCreateIteratorLimit(b, 1000)
-}
-func BenchmarkEngine_CreateIterator_Limit_100K(b *testing.B) {
-	benchmarkEngineCreateIteratorLimit(b, 100000)
-}
-func BenchmarkEngine_CreateIterator_Limit_1M(b *testing.B) {
-	benchmarkEngineCreateIteratorLimit(b, 1000000)
-}
-
 func BenchmarkEngine_WritePoints(b *testing.B) {
 	batchSizes := []int{10, 100, 1000, 5000, 10000}
 	for _, sz := range batchSizes {
@@ -1819,53 +1967,187 @@ func BenchmarkEngine_WritePoints_Parallel(b *testing.B) {
 	}
 }
 
-func benchmarkEngineCreateIteratorLimit(b *testing.B, pointN int) {
-	benchmarkIterator(b, query.IteratorOptions{
-		Expr:       influxql.MustParseExpr("value"),
-		Dimensions: []string{"host"},
-		Ascending:  true,
-		StartTime:  influxql.MinTime,
-		EndTime:    influxql.MaxTime,
-		Limit:      10,
-	}, pointN)
+var benchmarks = []struct {
+	name string
+	opt  query.IteratorOptions
+}{
+	{
+		name: "Count",
+		opt: query.IteratorOptions{
+			Expr:      influxql.MustParseExpr("count(value)"),
+			Ascending: true,
+			StartTime: influxql.MinTime,
+			EndTime:   influxql.MaxTime,
+		},
+	},
+	{
+		name: "First",
+		opt: query.IteratorOptions{
+			Expr:      influxql.MustParseExpr("first(value)"),
+			Ascending: true,
+			StartTime: influxql.MinTime,
+			EndTime:   influxql.MaxTime,
+		},
+	},
+	{
+		name: "Last",
+		opt: query.IteratorOptions{
+			Expr:      influxql.MustParseExpr("last(value)"),
+			Ascending: true,
+			StartTime: influxql.MinTime,
+			EndTime:   influxql.MaxTime,
+		},
+	},
+	{
+		name: "Limit",
+		opt: query.IteratorOptions{
+			Expr:      influxql.MustParseExpr("value"),
+			Ascending: true,
+			StartTime: influxql.MinTime,
+			EndTime:   influxql.MaxTime,
+			Limit:     10,
+		},
+	},
 }
 
-func benchmarkIterator(b *testing.B, opt query.IteratorOptions, pointN int) {
-	e := MustInitDefaultBenchmarkEngine(pointN)
-	b.ResetTimer()
-	b.ReportAllocs()
+var benchmarkVariants = []struct {
+	name   string
+	modify func(opt query.IteratorOptions) query.IteratorOptions
+}{
+	{
+		name: "All",
+		modify: func(opt query.IteratorOptions) query.IteratorOptions {
+			return opt
+		},
+	},
+	{
+		name: "GroupByTime_1m-1h",
+		modify: func(opt query.IteratorOptions) query.IteratorOptions {
+			opt.StartTime = 0
+			opt.EndTime = int64(time.Hour) - 1
+			opt.Interval = query.Interval{
+				Duration: time.Minute,
+			}
+			return opt
+		},
+	},
+	{
+		name: "GroupByTime_1h-1d",
+		modify: func(opt query.IteratorOptions) query.IteratorOptions {
+			opt.StartTime = 0
+			opt.EndTime = int64(24*time.Hour) - 1
+			opt.Interval = query.Interval{
+				Duration: time.Hour,
+			}
+			return opt
+		},
+	},
+	{
+		name: "GroupByTime_1m-1d",
+		modify: func(opt query.IteratorOptions) query.IteratorOptions {
+			opt.StartTime = 0
+			opt.EndTime = int64(24*time.Hour) - 1
+			opt.Interval = query.Interval{
+				Duration: time.Minute,
+			}
+			return opt
+		},
+	},
+	{
+		name: "GroupByHost",
+		modify: func(opt query.IteratorOptions) query.IteratorOptions {
+			opt.Dimensions = []string{"host"}
+			return opt
+		},
+	},
+	{
+		name: "GroupByHostAndTime_1m-1h",
+		modify: func(opt query.IteratorOptions) query.IteratorOptions {
+			opt.Dimensions = []string{"host"}
+			opt.StartTime = 0
+			opt.EndTime = int64(time.Hour) - 1
+			opt.Interval = query.Interval{
+				Duration: time.Minute,
+			}
+			return opt
+		},
+	},
+	{
+		name: "GroupByHostAndTime_1h-1d",
+		modify: func(opt query.IteratorOptions) query.IteratorOptions {
+			opt.Dimensions = []string{"host"}
+			opt.StartTime = 0
+			opt.EndTime = int64(24*time.Hour) - 1
+			opt.Interval = query.Interval{
+				Duration: time.Hour,
+			}
+			return opt
+		},
+	},
+	{
+		name: "GroupByHostAndTime_1m-1d",
+		modify: func(opt query.IteratorOptions) query.IteratorOptions {
+			opt.Dimensions = []string{"host"}
+			opt.StartTime = 0
+			opt.EndTime = int64(24*time.Hour) - 1
+			opt.Interval = query.Interval{
+				Duration: time.Hour,
+			}
+			return opt
+		},
+	},
+}
 
-	for i := 0; i < b.N; i++ {
-		itr, err := e.CreateIterator(context.Background(), "cpu", opt)
-		if err != nil {
-			b.Fatal(err)
+func BenchmarkEngine_CreateIterator(b *testing.B) {
+	engines := make([]*benchmarkEngine, len(sizes))
+	for i, size := range sizes {
+		engines[i] = MustInitDefaultBenchmarkEngine(size.name, size.sz)
+	}
+
+	for _, tt := range benchmarks {
+		for _, variant := range benchmarkVariants {
+			name := tt.name + "_" + variant.name
+			opt := variant.modify(tt.opt)
+			b.Run(name, func(b *testing.B) {
+				for _, e := range engines {
+					b.Run(e.Name, func(b *testing.B) {
+						b.ReportAllocs()
+						for i := 0; i < b.N; i++ {
+							itr, err := e.CreateIterator(context.Background(), "cpu", opt)
+							if err != nil {
+								b.Fatal(err)
+							}
+							query.DrainIterator(itr)
+						}
+					})
+				}
+			})
 		}
-		query.DrainIterator(itr)
 	}
 }
 
-var benchmark struct {
-	Engine *Engine
+type benchmarkEngine struct {
+	*Engine
+	Name   string
 	PointN int
 }
 
-var hostNames = []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"}
+var (
+	hostNames = []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"}
+	sizes     = []struct {
+		name string
+		sz   int
+	}{
+		{name: "1K", sz: 1000},
+		{name: "100K", sz: 100000},
+		{name: "1M", sz: 1000000},
+	}
+)
 
 // MustInitDefaultBenchmarkEngine creates a new engine using the default index
 // and fills it with points.  Reuses previous engine if the same parameters
 // were used.
-func MustInitDefaultBenchmarkEngine(pointN int) *Engine {
-	// Reuse engine, if available.
-	if benchmark.Engine != nil {
-		if benchmark.PointN == pointN {
-			return benchmark.Engine
-		}
-
-		// Otherwise close and remove it.
-		benchmark.Engine.Close()
-		benchmark.Engine = nil
-	}
-
+func MustInitDefaultBenchmarkEngine(name string, pointN int) *benchmarkEngine {
 	const batchSize = 1000
 	if pointN%batchSize != 0 {
 		panic(fmt.Sprintf("point count (%d) must be a multiple of batch size (%d)", pointN, batchSize))
@@ -1905,10 +2187,11 @@ func MustInitDefaultBenchmarkEngine(pointN int) *Engine {
 	runtime.GC()
 
 	// Save engine reference for reuse.
-	benchmark.Engine = e
-	benchmark.PointN = pointN
-
-	return e
+	return &benchmarkEngine{
+		Engine: e,
+		Name:   name,
+		PointN: pointN,
+	}
 }
 
 // Engine is a test wrapper for tsm1.Engine.

@@ -752,12 +752,21 @@ func (itr *seriesPointIterator) readSeriesKeys(name []byte) error {
 
 	// Slurp all series keys.
 	itr.keys = itr.keys[:0]
-	for {
+	for i := 0; ; i++ {
 		elem, err := sitr.Next()
 		if err != nil {
 			return err
 		} else if elem.SeriesID == 0 {
 			break
+		}
+
+		// Periodically check for interrupt.
+		if i&0xFF == 0xFF {
+			select {
+			case <-itr.opt.InterruptCh:
+				return itr.Close()
+			default:
+			}
 		}
 
 		key := itr.indexSet.SeriesFile.SeriesKey(elem.SeriesID)
@@ -1874,10 +1883,13 @@ func (is IndexSet) seriesByBinaryExprIterator(name []byte, n *influxql.BinaryExp
 	case *influxql.VarRef:
 		return is.seriesByBinaryExprVarRefIterator(name, []byte(key.Val), value, n.Op)
 	default:
-		if n.Op == influxql.NEQ || n.Op == influxql.NEQREGEX {
-			return is.measurementSeriesIDIterator(name)
+		// We do not know how to evaluate this expression so pass it
+		// on to the query engine.
+		itr, err := is.measurementSeriesIDIterator(name)
+		if err != nil {
+			return nil, err
 		}
-		return nil, nil
+		return newSeriesIDExprIterator(itr, n), nil
 	}
 }
 
