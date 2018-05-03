@@ -1024,7 +1024,13 @@ func (e *Engine) overlay(r io.Reader, basePath string, asNew bool) error {
 	}
 
 	// Load any new series keys to the index
-	readers := make([]chan seriesKey, 0, len(newFiles))
+	tsmFiles := make([]TSMFile, 0, len(newFiles))
+	defer func() {
+		for _, r := range tsmFiles {
+			r.Close()
+		}
+	}()
+
 	ext := fmt.Sprintf(".%s", TmpTSMFileExtension)
 	for _, f := range newFiles {
 		// If asNew is true, the files created from readFileFromBackup will be new ones
@@ -1035,9 +1041,6 @@ func (e *Engine) overlay(r io.Reader, basePath string, asNew bool) error {
 			continue
 		}
 
-		ch := make(chan seriesKey, 1)
-		readers = append(readers, ch)
-
 		fd, err := os.Open(f)
 		if err != nil {
 			return err
@@ -1047,30 +1050,23 @@ func (e *Engine) overlay(r io.Reader, basePath string, asNew bool) error {
 		if err != nil {
 			return err
 		}
-		defer r.Close()
-
-		go func(c chan seriesKey, r *TSMReader) {
-			n := r.KeyCount()
-			for i := 0; i < n; i++ {
-				key, typ := r.KeyAt(i)
-				c <- seriesKey{key, typ}
-			}
-			close(c)
-		}(ch, r)
+		tsmFiles = append(tsmFiles, r)
 	}
 
 	// Merge and dedup all the series keys across each reader to reduce
 	// lock contention on the index.
 	keys := make([][]byte, 0, 10000)
 	fieldTypes := make([]influxql.DataType, 0, 10000)
-	merged := merge(readers...)
-	for v := range merged {
-		fieldType := BlockTypeToInfluxQLDataType(v.typ)
+
+	ki := newMergeKeyIterator(tsmFiles, nil)
+	for ki.Next() {
+		key, typ := ki.Read()
+		fieldType := BlockTypeToInfluxQLDataType(typ)
 		if fieldType == influxql.Unknown {
-			return fmt.Errorf("unknown block type: %v", v.typ)
+			return fmt.Errorf("unknown block type: %v", typ)
 		}
 
-		keys = append(keys, v.key)
+		keys = append(keys, key)
 		fieldTypes = append(fieldTypes, fieldType)
 
 		if len(keys) == cap(keys) {
@@ -1258,12 +1254,14 @@ func (e *Engine) WritePoints(points []models.Point) error {
 
 // DeleteSeriesRange removes the values between min and max (inclusive) from all series
 func (e *Engine) DeleteSeriesRange(itr tsdb.SeriesIterator, min, max int64) error {
-	return e.DeleteSeriesRangeWithPredicate(itr, min, max, nil)
+	return e.DeleteSeriesRangeWithPredicate(itr, func(name []byte, tags models.Tags) (int64, int64, bool) {
+		return min, max, true
+	})
 }
 
 // DeleteSeriesRangeWithPredicate removes the values between min and max (inclusive) from all series
 // for which predicate() returns true. If predicate() is nil, then all values in range are removed.
-func (e *Engine) DeleteSeriesRangeWithPredicate(itr tsdb.SeriesIterator, min, max int64, predicate func(name []byte, tags models.Tags) bool) error {
+func (e *Engine) DeleteSeriesRangeWithPredicate(itr tsdb.SeriesIterator, predicate func(name []byte, tags models.Tags) (int64, int64, bool)) error {
 	var disableOnce bool
 
 	// Ensure that the index does not compact away the measurement or series we're
@@ -1280,7 +1278,24 @@ func (e *Engine) DeleteSeriesRangeWithPredicate(itr tsdb.SeriesIterator, min, ma
 		defer fs.Release()
 	}
 
-	var sz int
+	var (
+		sz       int
+		min, max int64 = math.MinInt64, math.MaxInt64
+
+		// Indicator that the min/max time for the current batch has changed and
+		// we need to flush the current batch before appending to it.
+		flushBatch bool
+	)
+
+	// These are reversed from min/max to ensure they are different the first time through.
+	newMin, newMax := int64(math.MaxInt64), int64(math.MinInt64)
+
+	// There is no predicate, so setup newMin/newMax to delete the full time range.
+	if predicate == nil {
+		newMin = min
+		newMax = max
+	}
+
 	batch := make([][]byte, 0, 10000)
 	for {
 		elem, err := itr.Next()
@@ -1288,8 +1303,19 @@ func (e *Engine) DeleteSeriesRangeWithPredicate(itr tsdb.SeriesIterator, min, ma
 			return err
 		} else if elem == nil {
 			break
-		} else if predicate != nil && !predicate(elem.Name(), elem.Tags()) {
-			continue
+		}
+
+		// See if the series should be deleted and if so, what range of time.
+		if predicate != nil {
+			var shouldDelete bool
+			newMin, newMax, shouldDelete = predicate(elem.Name(), elem.Tags())
+			if !shouldDelete {
+				continue
+			}
+
+			// If the min/max happens to change for the batch, we need to flush
+			// the current batch and start a new one.
+			flushBatch = (min != newMin || max != newMax) && len(batch) > 0
 		}
 
 		if elem.Expr() != nil {
@@ -1315,18 +1341,23 @@ func (e *Engine) DeleteSeriesRangeWithPredicate(itr tsdb.SeriesIterator, min, ma
 			disableOnce = true
 		}
 
-		key := models.MakeKey(elem.Name(), elem.Tags())
-		sz += len(key)
-		batch = append(batch, key)
-
-		if sz >= deleteFlushThreshold {
+		if sz >= deleteFlushThreshold || flushBatch {
 			// Delete all matching batch.
 			if err := e.deleteSeriesRange(batch, min, max); err != nil {
 				return err
 			}
 			batch = batch[:0]
 			sz = 0
+			flushBatch = false
 		}
+
+		// Use the new min/max time for the next iteration
+		min = newMin
+		max = newMax
+
+		key := models.MakeKey(elem.Name(), elem.Tags())
+		sz += len(key)
+		batch = append(batch, key)
 	}
 
 	if len(batch) > 0 {
